@@ -637,6 +637,96 @@ def api_content_update(item_id: str, req: ContentUpdateRequest, db: Session = De
     return _serialize_studio_question(db, q)
 
 
+@router.delete("/content/bank/all")
+def api_content_delete_all_bank(skill: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Permanently deletes bank questions/prompts across all devices.
+    Also removes associated audio files from disk.
+    """
+    q_query = db.query(QuestionItem)
+    if skill and skill in ("reading", "listening"):
+        q_query = q_query.filter(QuestionItem.skill == skill)
+    questions = q_query.all()
+    q_ids = [q.id for q in questions]
+
+    if q_ids:
+        assets = db.query(AudioAsset).filter(AudioAsset.question_id.in_(q_ids)).all()
+        for ast in assets:
+            if ast.file_path:
+                fn = Path(ast.file_path).name
+                p = Path(settings.AUDIO_STORAGE_DIR) / fn
+                if p.exists():
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+            db.delete(ast)
+        for q in questions:
+            db.delete(q)
+
+    deleted_w = 0
+    if not skill or skill == "writing":
+        w_query = db.query(WritingPrompt)
+        deleted_w = w_query.count()
+        w_query.delete(synchronize_session=False)
+
+    # Mark initialized so server restarts don't auto-re-seed deleted questions
+    setting_row = db.query(AppSetting).filter(AppSetting.key == "seed_bank_initialized").first()
+    if not setting_row:
+        db.add(AppSetting(key="seed_bank_initialized", value_json=True))
+    else:
+        setting_row.value_json = True
+
+    db.commit()
+    return {
+        "deleted": True,
+        "deleted_questions": len(q_ids),
+        "deleted_writing": deleted_w,
+    }
+
+
+@router.post("/content/bank/reset-default")
+def api_content_reset_default_bank(db: Session = Depends(get_db)):
+    """
+    Wipes and re-seeds default calibrated question bank across A1-C1 with valid audio.
+    """
+    from app.services.question_generation.seed_bank import ensure_seed_bank
+    res = ensure_seed_bank(db, force=True)
+    return {"reset": True, **res}
+
+
+@router.delete("/content/{item_id}")
+def api_content_delete_item(item_id: str, db: Session = Depends(get_db)):
+    """
+    Permanently deletes a single QuestionItem or WritingPrompt.
+    """
+    q = db.query(QuestionItem).filter(QuestionItem.id == item_id).first()
+    if q:
+        if q.skill == "listening":
+            assets = db.query(AudioAsset).filter(AudioAsset.question_id == q.id).all()
+            for ast in assets:
+                if ast.file_path:
+                    fn = Path(ast.file_path).name
+                    p = Path(settings.AUDIO_STORAGE_DIR) / fn
+                    if p.exists():
+                        try:
+                            p.unlink()
+                        except Exception:
+                            pass
+                db.delete(ast)
+        db.delete(q)
+        db.commit()
+        return {"deleted": True, "type": "question", "id": item_id}
+
+    w = db.query(WritingPrompt).filter(WritingPrompt.id == item_id).first()
+    if w:
+        db.delete(w)
+        db.commit()
+        return {"deleted": True, "type": "writing", "id": item_id}
+
+    raise HTTPException(status_code=404, detail="Content item not found")
+
+
 # ---------------- 27.8 AI & TTS Settings ----------------
 
 @router.get("/settings/ai")
@@ -698,9 +788,18 @@ def api_get_provider_models(provider: str, db: Session = Depends(get_db)):
 
 @router.post("/tts/preview")
 def api_tts_preview(voice: str = "en_voice_01"):
+    default_preview = Path(settings.AUDIO_STORAGE_DIR) / f"preview_{voice}.mp3"
+    if default_preview.exists() and default_preview.stat().st_size > 1000:
+        return {
+            "file_path": f"/api/audio/preview_{voice}.mp3",
+            "duration_seconds": 4.5,
+            "format": "mp3",
+            "voice": voice,
+            "status": "READY",
+        }
     info = tts_engine.generate_audio_asset(
         question_id=f"preview_{voice}",
-        script_text="This is a sample listening voice check for the CEST Practice Simulator.",
+        script_text=f"Welcome to the English practice simulator. This is a clear audio preview for {voice}.",
         speaker_count=1,
         voice=voice,
     )
@@ -720,4 +819,5 @@ def api_serve_audio(filename: str):
         )
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Audio asset not found")
-    return FileResponse(path=str(file_path), media_type="audio/wav", filename=safe_name)
+    media_type = "audio/mpeg" if safe_name.lower().endswith(".mp3") else "audio/wav"
+    return FileResponse(path=str(file_path), media_type=media_type, filename=safe_name)

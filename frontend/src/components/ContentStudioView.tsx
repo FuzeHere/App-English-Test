@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   Database,
   Sparkles,
@@ -10,6 +10,10 @@ import {
   Edit3,
   AlertTriangle,
   Volume2,
+  Trash2,
+  Play,
+  Pause,
+  RotateCcw,
 } from "lucide-react";
 import { api, API_BASE_URL } from "@/lib/api";
 
@@ -62,6 +66,15 @@ export default function ContentStudioView() {
   const [editExplanation, setEditExplanation] = useState<string>("");
   const [editCefr, setEditCefr] = useState<string>("B1");
   const [editTheta, setEditTheta] = useState<number>(0.0);
+
+  // Live Audio Preview State
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Danger / Reset Modals State
+  const [confirmClearAllModal, setConfirmClearAllModal] = useState<boolean>(false);
+  const [confirmResetModal, setConfirmResetModal] = useState<boolean>(false);
+  const [isProcessingAction, setIsProcessingAction] = useState<boolean>(false);
 
   const loadAllStudioData = async () => {
     try {
@@ -160,6 +173,107 @@ export default function ContentStudioView() {
     }
   };
 
+  const handleToggleLiveAudio = (id: string, url: string, transcript?: string) => {
+    if (playingAudioId === id) {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+      setPlayingAudioId(null);
+      return;
+    }
+
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    const fullUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}?t=${Date.now()}`;
+    const audio = new Audio(fullUrl);
+    currentAudioRef.current = audio;
+    setPlayingAudioId(id);
+
+    audio.onended = () => {
+      setPlayingAudioId((curr) => (curr === id ? null : curr));
+      currentAudioRef.current = null;
+    };
+
+    audio.onerror = () => {
+      // Fallback to browser SpeechSynthesis if audio file is not playable
+      if (transcript && typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(transcript);
+        u.lang = "en-US";
+        u.onend = () => setPlayingAudioId(null);
+        u.onerror = () => setPlayingAudioId(null);
+        window.speechSynthesis.speak(u);
+      } else {
+        setPlayingAudioId(null);
+        setStatusMsg("Audio sedang diputar via speech synthesizer.");
+      }
+    };
+
+    audio.play().catch(() => {
+      if (transcript && typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(transcript);
+        u.lang = "en-US";
+        u.onend = () => setPlayingAudioId(null);
+        u.onerror = () => setPlayingAudioId(null);
+        window.speechSynthesis.speak(u);
+      } else {
+        setPlayingAudioId(null);
+      }
+    });
+  };
+
+  const handleDeleteItem = async (id: string) => {
+    if (!window.confirm("Hapus butir soal ini secara permanen dari database?")) return;
+    try {
+      await api.deleteContent(id);
+      setStatusMsg("Butir soal berhasil dihapus secara permanen.");
+      await loadAllStudioData();
+    } catch (err: any) {
+      setStatusMsg(`Gagal menghapus: ${err.message}`);
+    }
+  };
+
+  const handleClearAllBank = async () => {
+    setIsProcessingAction(true);
+    try {
+      const res = await api.deleteAllBank();
+      setConfirmClearAllModal(false);
+      setStatusMsg(
+        `Berhasil mengosongkan bank soal (${res.deleted_questions} soal, ${res.deleted_writing} writing prompts dihapus).`
+      );
+      await loadAllStudioData();
+    } catch (err: any) {
+      setStatusMsg(`Gagal menghapus bank: ${err.message}`);
+    } finally {
+      setIsProcessingAction(false);
+    }
+  };
+
+  const handleResetDefaultBank = async () => {
+    setIsProcessingAction(true);
+    try {
+      await api.resetDefaultBank();
+      setConfirmResetModal(false);
+      setStatusMsg("Bank soal bawaan berhasil dipulihkan (Reading, Listening & Writing).");
+      await loadAllStudioData();
+    } catch (err: any) {
+      setStatusMsg(`Gagal mereset bank bawaan: ${err.message}`);
+    } finally {
+      setIsProcessingAction(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -172,56 +286,80 @@ export default function ContentStudioView() {
           </p>
         </div>
 
-        {/* Sub-navigation Tabs */}
-        <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-300">
-          <button
-            id="studio-tab-health"
-            type="button"
-            onClick={() => setSubTab("health")}
-            className={`rounded px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer ${
-              subTab === "health"
-                ? "bg-blue-900 text-white"
-                : "text-slate-700 hover:bg-slate-100"
-            }`}
-          >
-            Bank Health
-          </button>
-          <button
-            id="studio-tab-generate"
-            type="button"
-            onClick={() => setSubTab("generate")}
-            className={`rounded px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer ${
-              subTab === "generate"
-                ? "bg-blue-900 text-white"
-                : "text-slate-700 hover:bg-slate-100"
-            }`}
-          >
-            Generate Bank
-          </button>
-          <button
-            id="studio-tab-review"
-            type="button"
-            onClick={() => setSubTab("review")}
-            className={`rounded px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer ${
-              subTab === "review"
-                ? "bg-blue-900 text-white"
-                : "text-slate-700 hover:bg-slate-100"
-            }`}
-          >
-            Review Queue ({bankHealth?.review_queue_count ?? 0})
-          </button>
-          <button
-            id="studio-tab-approved"
-            type="button"
-            onClick={() => setSubTab("approved")}
-            className={`rounded px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer ${
-              subTab === "approved"
-                ? "bg-blue-900 text-white"
-                : "text-slate-700 hover:bg-slate-100"
-            }`}
-          >
-            Question Bank ({bankHealth?.total_approved_tasks ?? 0})
-          </button>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Sub-navigation Tabs */}
+          <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-300">
+            <button
+              id="studio-tab-health"
+              type="button"
+              onClick={() => setSubTab("health")}
+              className={`rounded px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                subTab === "health"
+                  ? "bg-blue-900 text-white"
+                  : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              Bank Health
+            </button>
+            <button
+              id="studio-tab-generate"
+              type="button"
+              onClick={() => setSubTab("generate")}
+              className={`rounded px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                subTab === "generate"
+                  ? "bg-blue-900 text-white"
+                  : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              Generate Bank
+            </button>
+            <button
+              id="studio-tab-review"
+              type="button"
+              onClick={() => setSubTab("review")}
+              className={`rounded px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                subTab === "review"
+                  ? "bg-blue-900 text-white"
+                  : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              Review Queue ({bankHealth?.review_queue_count ?? 0})
+            </button>
+            <button
+              id="studio-tab-approved"
+              type="button"
+              onClick={() => setSubTab("approved")}
+              className={`rounded px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                subTab === "approved"
+                  ? "bg-blue-900 text-white"
+                  : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              Question Bank ({bankHealth?.total_approved_tasks ?? 0})
+            </button>
+          </div>
+
+          {/* Global Bank Maintenance Actions */}
+          <div className="flex items-center gap-1.5">
+            <button
+              id="studio-reset-bank-btn"
+              type="button"
+              onClick={() => setConfirmResetModal(true)}
+              className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white hover:bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 cursor-pointer shadow-xs"
+              title="Kembalikan bank soal bawaan sistem"
+            >
+              <RotateCcw className="h-3.5 w-3.5 text-blue-700" /> Reset Bawaan
+            </button>
+            <button
+              id="studio-clear-all-bank-btn"
+              type="button"
+              onClick={() => setConfirmClearAllModal(true)}
+              className="inline-flex items-center gap-1 rounded border border-rose-300 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 text-xs font-semibold text-rose-800 cursor-pointer shadow-xs"
+              title="Hapus seluruh bank soal"
+            >
+              <Trash2 className="h-3.5 w-3.5 text-rose-600" /> Hapus Semua Bank
+            </button>
+          </div>
         </div>
       </div>
 
@@ -480,14 +618,27 @@ export default function ContentStudioView() {
 
                     <div className="flex items-center gap-2">
                       {q.audio && (
-                        <a
-                          href={`${API_BASE_URL}${q.audio.url}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                        <button
+                          type="button"
+                          onClick={() => handleToggleLiveAudio(q.id, q.audio.url, q.content_json?.transcript)}
+                          className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                            playingAudioId === q.id
+                              ? "border-amber-400 bg-amber-50 text-amber-900 animate-pulse"
+                              : "border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800"
+                          }`}
                         >
-                          <Volume2 className="h-3.5 w-3.5" /> Audio ({q.audio.duration_seconds}s)
-                        </a>
+                          {playingAudioId === q.id ? (
+                            <>
+                              <Pause className="h-3.5 w-3.5 text-amber-700" />
+                              <span>Stop Preview</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="h-3.5 w-3.5 text-blue-700" />
+                              <span>Dengar ({q.audio.duration_seconds}s)</span>
+                            </>
+                          )}
+                        </button>
                       )}
                       <button
                         type="button"
@@ -521,6 +672,14 @@ export default function ContentStudioView() {
                         className="inline-flex items-center gap-1 rounded border border-rose-300 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 text-xs font-semibold text-rose-800 cursor-pointer"
                       >
                         <XCircle className="h-3.5 w-3.5" /> Reject
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteItem(q.id)}
+                        className="inline-flex items-center gap-1 rounded border border-rose-200 bg-rose-50 hover:bg-rose-100 px-2.5 py-1.5 text-xs font-semibold text-rose-700 cursor-pointer"
+                        title="Hapus permanen dari database"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Hapus
                       </button>
                     </div>
                   </div>
@@ -575,6 +734,14 @@ export default function ContentStudioView() {
                       >
                         <XCircle className="h-3.5 w-3.5" /> Reject
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteItem(w.id)}
+                        className="inline-flex items-center gap-1 rounded border border-rose-200 bg-rose-50 hover:bg-rose-100 px-2.5 py-1.5 text-xs font-semibold text-rose-700 cursor-pointer"
+                        title="Hapus prompt ini"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Hapus
+                      </button>
                     </div>
                   </div>
                   <p className="text-xs text-slate-800 whitespace-pre-line">{w.prompt_text}</p>
@@ -612,14 +779,27 @@ export default function ContentStudioView() {
 
               <div className="flex items-center gap-2">
                 {q.audio && (
-                  <a
-                    href={`${API_BASE_URL}${q.audio.url}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-100"
+                  <button
+                    type="button"
+                    onClick={() => handleToggleLiveAudio(q.id, q.audio.url, q.content_json?.transcript)}
+                    className={`inline-flex items-center gap-1.5 rounded border px-3 py-1 text-xs font-semibold transition cursor-pointer ${
+                      playingAudioId === q.id
+                        ? "border-amber-400 bg-amber-50 text-amber-900 animate-pulse"
+                        : "border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800"
+                    }`}
                   >
-                    <Volume2 className="h-3.5 w-3.5" /> Audio ({q.audio.duration_seconds}s)
-                  </a>
+                    {playingAudioId === q.id ? (
+                      <>
+                        <Pause className="h-3.5 w-3.5 text-amber-700" />
+                        <span>Stop</span>
+                      </>
+                    ) : (
+                      <>
+                        <Volume2 className="h-3.5 w-3.5 text-blue-700" />
+                        <span>Dengar ({q.audio.duration_seconds}s)</span>
+                      </>
+                    )}
+                  </button>
                 )}
                 <button
                   type="button"
@@ -633,9 +813,130 @@ export default function ContentStudioView() {
                 >
                   <Edit3 className="h-3.5 w-3.5" /> Edit Metadata
                 </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteItem(q.id)}
+                  className="inline-flex items-center gap-1 rounded border border-rose-200 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700 cursor-pointer"
+                  title="Hapus soal ini"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Hapus
+                </button>
               </div>
             </div>
           ))}
+
+          {/* Approved Writing Prompts */}
+          {approvedBank.writing_prompts?.map((w: any) => (
+            <div
+              key={w.id}
+              className="rounded-lg border border-slate-300 bg-white p-4 shadow-xs flex flex-wrap items-center justify-between gap-4"
+            >
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="rounded bg-emerald-100 text-emerald-900 px-2 py-0.5 text-[11px] font-bold">
+                    APPROVED
+                  </span>
+                  <span className="text-xs font-bold uppercase text-slate-900">
+                    WRITING • Part {w.task_part} ({w.text_type})
+                  </span>
+                  <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                    CEFR: {w.cefr_target} (Min {w.minimum_words} kata)
+                  </span>
+                </div>
+                <p className="text-xs text-slate-700 line-clamp-2">{w.prompt_text}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDeleteItem(w.id)}
+                  className="inline-flex items-center gap-1 rounded border border-rose-200 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700 cursor-pointer"
+                  title="Hapus prompt ini"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Hapus
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {approvedBank.questions.length === 0 && (!approvedBank.writing_prompts || approvedBank.writing_prompts.length === 0) && (
+            <div className="text-center py-12 rounded-lg border border-dashed border-slate-300 bg-slate-50 text-slate-600 text-xs space-y-2">
+              <p className="font-semibold text-sm text-slate-800">Bank soal saat ini kosong.</p>
+              <p>Anda dapat membuat soal baru di tab <strong>Generate Bank</strong> atau memulihkan bank standar dengan tombol <strong>Reset Bawaan</strong> di atas.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Confirmation Modal: Clear All Bank */}
+      {confirmClearAllModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-rose-600">
+              <AlertTriangle className="h-6 w-6" />
+              <h3 className="text-base font-extrabold text-slate-900">
+                Kosongkan Seluruh Bank Soal?
+              </h3>
+            </div>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              Tindakan ini akan <strong>menghapus permanen</strong> seluruh soal Reading, Listening, dan Writing prompt di database serta berkas audio terkait di semua perangkat.
+            </p>
+            <p className="text-xs text-amber-800 bg-amber-50 p-2.5 rounded border border-amber-200">
+              Catatan: Status penghapusan ini akan tetap tersimpan konsisten dan tidak akan kembali otomatis saat server atau VPS dinyalakan ulang.
+            </p>
+            <div className="flex justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmClearAllModal(false)}
+                disabled={isProcessingAction}
+                className="rounded border border-slate-300 px-4 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleClearAllBank}
+                disabled={isProcessingAction}
+                className="rounded bg-rose-700 hover:bg-rose-800 px-4 py-1.5 text-xs font-semibold text-white cursor-pointer"
+              >
+                {isProcessingAction ? "Menghapus..." : "Ya, Hapus Semua"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal: Reset Default Bank */}
+      {confirmResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-blue-900">
+              <RotateCcw className="h-6 w-6" />
+              <h3 className="text-base font-extrabold text-slate-900">
+                Pulihkan Bank Soal Bawaan?
+              </h3>
+            </div>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              Tindakan ini akan menginisialisasi ulang bank soal standar terkalibrasi lengkap (Reading RT-01 s/d RT-09, Listening LT-01 s/d LT-03 dengan suara jernih, dan Writing prompts) pada level A1 hingga C1.
+            </p>
+            <div className="flex justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmResetModal(false)}
+                disabled={isProcessingAction}
+                className="rounded border border-slate-300 px-4 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleResetDefaultBank}
+                disabled={isProcessingAction}
+                className="rounded bg-blue-900 hover:bg-blue-800 px-4 py-1.5 text-xs font-semibold text-white cursor-pointer"
+              >
+                {isProcessingAction ? "Memulihkan..." : "Ya, Pulihkan Bank Bawaan"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

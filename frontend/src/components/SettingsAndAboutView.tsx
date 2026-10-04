@@ -104,9 +104,32 @@ export default function SettingsAndAboutView({
       const url = `${API_BASE_URL}${res.file_path}?t=${Date.now()}`;
       setPreviewAudioUrl(url);
       const audio = new Audio(url);
-      audio.play().catch(() => {});
+      audio.onerror = () => {
+        if ("speechSynthesis" in window) {
+          window.speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance("Welcome to the English practice simulator. This is a clear audio preview for your test.");
+          u.lang = "en-US";
+          window.speechSynthesis.speak(u);
+        }
+      };
+      audio.play().catch(() => {
+        if ("speechSynthesis" in window) {
+          window.speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance("Welcome to the English practice simulator. This is a clear audio preview for your test.");
+          u.lang = "en-US";
+          window.speechSynthesis.speak(u);
+        }
+      });
     } catch (err: any) {
-      setStatusMsg(`Gagal memutar preview TTS: ${err.message}`);
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance("Welcome to the English practice simulator. This is a clear audio preview for your test.");
+        u.lang = "en-US";
+        window.speechSynthesis.speak(u);
+        setPreviewAudioUrl("speech_synthesis");
+      } else {
+        setStatusMsg(`Gagal memutar preview TTS: ${err.message}`);
+      }
     }
   };
 

@@ -1264,14 +1264,34 @@ def get_initial_writing_prompts() -> List[Dict[str, Any]]:
     ]
 
 
-def ensure_seed_bank(db: Session) -> Dict[str, int]:
+def ensure_seed_bank(db: Session, force: bool = False) -> Dict[str, int]:
     """
     Idempotently seeds the initial approved question bank (Reading, Listening with generated local WAV audio,
     and Writing prompts) so Practice Mode and Full Test Simulation work immediately out of the box.
-    Also creates a couple of items in REVIEW status so the Content Studio Review Queue is demonstrable right away.
+    Tracks 'seed_bank_initialized' in AppSetting so user-initiated wipes are preserved across server restarts.
     """
+    from app.models.entities import AppSetting
+    setting = db.query(AppSetting).filter(AppSetting.key == "seed_bank_initialized").first()
+
     existing_questions = db.query(QuestionItem).count()
     existing_writing = db.query(WritingPrompt).count()
+
+    if not force:
+        if setting and setting.value_json is True:
+            return {"already_initialized": True, "count": existing_questions}
+        if existing_questions > 0:
+            if not setting:
+                db.add(AppSetting(key="seed_bank_initialized", value_json=True))
+                db.commit()
+            return {"already_initialized": True, "count": existing_questions}
+
+    if force:
+        db.query(AudioAsset).delete(synchronize_session=False)
+        db.query(QuestionItem).delete(synchronize_session=False)
+        db.query(WritingPrompt).delete(synchronize_session=False)
+        db.commit()
+        existing_questions = 0
+        existing_writing = 0
 
     seeded_reading = 0
     seeded_listening = 0
@@ -1387,6 +1407,12 @@ def ensure_seed_bank(db: Session) -> Dict[str, int]:
             )
             db.add(prompt_obj)
             seeded_writing += 1
+
+    setting = db.query(AppSetting).filter(AppSetting.key == "seed_bank_initialized").first()
+    if not setting:
+        db.add(AppSetting(key="seed_bank_initialized", value_json=True))
+    else:
+        setting.value_json = True
 
     db.commit()
     return {

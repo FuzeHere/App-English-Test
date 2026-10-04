@@ -114,6 +114,14 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  deleteContent: (id: string) =>
+    apiRequest<any>(`/api/content/${id}`, { method: "DELETE" }),
+  deleteAllBank: (skill?: string) =>
+    apiRequest<any>(`/api/content/bank/all${skill ? `?skill=${skill}` : ""}`, {
+      method: "DELETE",
+    }),
+  resetDefaultBank: () =>
+    apiRequest<any>("/api/content/bank/reset-default", { method: "POST" }),
 
   // Settings & AI Health
   getSettingsAI: () => apiRequest<any>("/api/settings/ai"),

@@ -89,3 +89,32 @@ def test_complete_api_integration_flows():
         # Verify approved bank is untouched after deleting history
         r_bank_after = client.get("/api/content/bank-health")
         assert r_bank_after.json()["total_approved_tasks"] == bank_data["total_approved_tasks"]
+
+        # 5. Single Item Delete, Bulk Bank Wipe, and Reset Default Bank
+        r_app = client.get("/api/content/approved?skill=reading")
+        assert r_app.status_code == 200
+        reading_items = r_app.json()["questions"]
+        assert len(reading_items) > 0
+        target_item_id = reading_items[0]["id"]
+
+        r_single_del = client.delete(f"/api/content/{target_item_id}")
+        assert r_single_del.status_code == 200
+        assert r_single_del.json()["deleted"] is True
+
+        r_wipe = client.delete("/api/content/bank/all")
+        assert r_wipe.status_code == 200
+        assert r_wipe.json()["deleted"] is True
+        assert r_wipe.json()["deleted_questions"] > 0
+
+        r_empty_bank = client.get("/api/content/approved")
+        assert r_empty_bank.status_code == 200
+        assert len(r_empty_bank.json()["questions"]) == 0
+
+        # Reset default bank should restore questions and audio
+        r_reset = client.post("/api/content/bank/reset-default")
+        assert r_reset.status_code == 200
+        assert r_reset.json()["reset"] is True
+
+        r_restored_bank = client.get("/api/content/approved")
+        assert r_restored_bank.status_code == 200
+        assert len(r_restored_bank.json()["questions"]) >= 20

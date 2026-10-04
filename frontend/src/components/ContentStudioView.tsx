@@ -479,6 +479,16 @@ export default function ContentStudioView() {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {q.audio && (
+                        <a
+                          href={`${API_BASE_URL}${q.audio.url}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                        >
+                          <Volume2 className="h-3.5 w-3.5" /> Audio ({q.audio.duration_seconds}s)
+                        </a>
+                      )}
                       <button
                         type="button"
                         onClick={() => handleApprove(q.id)}

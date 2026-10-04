@@ -49,13 +49,20 @@ class LocalTTSAdapter:
         estimated_duration = max(6.0, min(22.0, round(len(words) / 3.2, 1)))
 
         if not file_path.exists():
-            self._synthesize_speech_cadence_wav(
+            sapi_ok = self._synthesize_with_sapi(
                 file_path=file_path,
                 script_text=script_text,
-                duration_seconds=estimated_duration,
                 speaker_count=speaker_count,
                 voice=voice,
             )
+            if not sapi_ok:
+                self._synthesize_speech_cadence_wav(
+                    file_path=file_path,
+                    script_text=script_text,
+                    duration_seconds=estimated_duration,
+                    speaker_count=speaker_count,
+                    voice=voice,
+                )
 
         qc = self.validate_audio_file(file_path, script_text)
 
@@ -73,6 +80,64 @@ class LocalTTSAdapter:
             "status": "READY" if qc["valid"] else "INVALID",
             "quality_check": qc,
         }
+
+    def _synthesize_with_sapi(
+        self,
+        file_path: Path,
+        script_text: str,
+        speaker_count: int,
+        voice: str,
+    ) -> bool:
+        """
+        Uses Windows native SAPI (Microsoft Speech API) to generate crystal-clear spoken English voice.
+        Automatically switches male/female voices for conversational dialogue if multiple voices exist.
+        """
+        try:
+            import win32com.client
+            voice_engine = win32com.client.Dispatch("SAPI.SpVoice")
+            stream = win32com.client.Dispatch("SAPI.SpFileStream")
+            voices = voice_engine.GetVoices()
+            v_count = voices.Count
+            if v_count == 0:
+                return False
+
+            v_male = voices.Item(0)
+            v_female = voices.Item(1) if v_count > 1 else v_male
+
+            temp_path = file_path.with_suffix(".tmp.wav")
+            stream.Open(str(temp_path.absolute()), 3, False)  # 3 = SSFMCreateForWrite
+            voice_engine.AudioOutputStream = stream
+            voice_engine.Rate = 0  # Standard natural conversational pace
+
+            lines = [l.strip() for l in (script_text or "").split("\n") if l.strip()]
+            has_dialogue_labels = any(":" in l[:25] for l in lines)
+
+            if has_dialogue_labels and v_count > 1:
+                for line in lines:
+                    prefix = line.split(":", 1)[0].lower() if ":" in line else ""
+                    if any(k in prefix for k in ["female", "woman", "customer", "elena", "samira", "hannah", "interviewer", "receptionist"]):
+                        voice_engine.Voice = v_female
+                    elif any(k in prefix for k in ["male", "man", "assistant", "david", "liam", "omar", "host", "clerk", "dr"]):
+                        voice_engine.Voice = v_male
+                    else:
+                        voice_engine.Voice = v_male
+                    voice_engine.Speak(line)
+            else:
+                target_v = v_female if voice == "en_voice_03" and v_female else v_male
+                voice_engine.Voice = target_v
+                voice_engine.Speak(script_text)
+
+            stream.Close()
+            if temp_path.exists() and temp_path.stat().st_size > 1000:
+                if file_path.exists():
+                    file_path.unlink()
+                temp_path.rename(file_path)
+                return True
+            if temp_path.exists():
+                temp_path.unlink()
+            return False
+        except Exception:
+            return False
 
     def _synthesize_speech_cadence_wav(
         self,

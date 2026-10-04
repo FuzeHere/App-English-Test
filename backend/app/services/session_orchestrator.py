@@ -2,6 +2,7 @@ import re
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.expression import func
 from fastapi import HTTPException
 
 from app.core.config import settings
@@ -245,8 +246,8 @@ def start_practice_session(
     }
 
     if skill == "writing":
-        p1 = db.query(WritingPrompt).filter(WritingPrompt.status == "APPROVED", WritingPrompt.task_part == 1).first()
-        p2 = db.query(WritingPrompt).filter(WritingPrompt.status == "APPROVED", WritingPrompt.task_part == 2).first()
+        p1 = db.query(WritingPrompt).filter(WritingPrompt.status == "APPROVED", WritingPrompt.task_part == 1).order_by(func.random()).first()
+        p2 = db.query(WritingPrompt).filter(WritingPrompt.status == "APPROVED", WritingPrompt.task_part == 2).order_by(func.random()).first()
         mod_state["writing_part_mode"] = writing_part_mode
         mod_state["part1_prompt_id"] = p1.id if p1 else None
         mod_state["part2_prompt_id"] = p2.id if p2 else None
@@ -329,8 +330,8 @@ def _create_module_session_for_skill(db: Session, session: TestSession, skill: s
     }
 
     if skill == "writing":
-        p1 = db.query(WritingPrompt).filter(WritingPrompt.status == "APPROVED", WritingPrompt.task_part == 1).first()
-        p2 = db.query(WritingPrompt).filter(WritingPrompt.status == "APPROVED", WritingPrompt.task_part == 2).first()
+        p1 = db.query(WritingPrompt).filter(WritingPrompt.status == "APPROVED", WritingPrompt.task_part == 1).order_by(func.random()).first()
+        p2 = db.query(WritingPrompt).filter(WritingPrompt.status == "APPROVED", WritingPrompt.task_part == 2).order_by(func.random()).first()
         mod_state["writing_part_mode"] = "full"
         mod_state["part1_prompt_id"] = p1.id if p1 else None
         mod_state["part2_prompt_id"] = p2.id if p2 else None
